@@ -94,8 +94,9 @@ from a Command Prompt in this folder:
 docker run --rm -v "%cd%:/src:ro" -w /src swift:6.2 swift test --scratch-path /tmp/build
 ```
 
-Every push to GitHub also runs these tests on Linux and builds the iPhone app
-on a macOS runner (`.github/workflows/build.yml`), without signing.
+Every push to GitHub also runs these tests on Linux and builds the iPhone app,
+unsigned, on a macOS runner (`.github/workflows/build.yml`). The result is on
+the repository's Actions tab.
 
 ## Next phases
 

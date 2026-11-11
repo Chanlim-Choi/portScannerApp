@@ -1,5 +1,7 @@
 name: Build
 
+# Free for public repositories. Runs on every push and pull request, and can
+# also be started by hand from the repository's Actions tab.
 on:
   push:
   pull_request:
