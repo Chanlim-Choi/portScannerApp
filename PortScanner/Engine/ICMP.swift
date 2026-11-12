@@ -166,6 +166,7 @@ enum Pinger {
             results[target.address] = uptime() - sent
         }
 
+        var anySent = false
         for round in 0..<min(max(rounds, 1), maxRounds) {
             for (index, target) in targets.enumerated() {
                 if flag.isCancelled { return results }
@@ -175,18 +176,28 @@ enum Pinger {
                 let packet = ICMPPacket.echoRequest(identifier: identifier, sequence: sequence, payload: payload)
                 var destination = target.socketAddress
                 sentAt[sequence] = uptime()
-                _ = packet.withUnsafeBytes { bytes in
+                let sent = packet.withUnsafeBytes { bytes in
                     withUnsafePointer(to: &destination) { pointer in
                         pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
                             sendto(fd, bytes.baseAddress, bytes.count, 0, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
                         }
                     }
                 }
+                if sent >= 0 {
+                    anySent = true
+                }
                 // Collect early replies while sending, and pace the burst.
                 receive(wait: 0)
                 if index % 16 == 15 {
                     usleep(2_000)
                 }
+            }
+
+            // Every send refused (no route, or iOS blocking local network
+            // access): ping is not usable here, which is not the same as
+            // nobody answering.
+            if !anySent && !targets.isEmpty {
+                return nil
             }
 
             let deadline = uptime() + timeout

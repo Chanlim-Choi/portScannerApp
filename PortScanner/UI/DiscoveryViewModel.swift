@@ -19,9 +19,16 @@ final class DiscoveryViewModel: ObservableObject {
     }
 
     func refreshNetwork() {
-        if !isRunning {
-            network = LocalNetwork.current()
+        guard !isRunning else { return }
+        let current = LocalNetwork.current()
+        // A list from another Wi-Fi network would be misleading.
+        if current?.cidr != network?.cidr && (!devices.isEmpty || summary != nil) {
+            devices = []
+            summary = nil
+            permissionDenied = false
+            notes = ["You are on a different network now. Search again to see its devices."]
         }
+        network = current
     }
 
     func device(at address: String) -> Device? {
@@ -116,6 +123,11 @@ final class DiscoveryViewModel: ObservableObject {
         summary = "\(verb) \(seconds) s: \(devices.count) \(word) found."
         if let note = interruptionNote {
             notes.append(note)
+        }
+        // Probes sent while iOS shows the Local Network question are lost.
+        let othersFound = devices.contains { !$0.isThisDevice }
+        if !stopped && !othersFound && !permissionDenied {
+            notes.append("No other devices answered. If iOS just asked for Local Network access, tap Allow and search again.")
         }
     }
 }

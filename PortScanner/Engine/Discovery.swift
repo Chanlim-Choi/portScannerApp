@@ -37,6 +37,31 @@ struct BonjourService: Hashable, Sendable {
         friendlyName ?? BonjourCatalog.displayName(instance: name, type: type)
     }
 
+    /// A Google Cast speaker group, announced by one of its member speakers.
+    var isGroup: Bool {
+        model == "Google Cast Group"
+    }
+
+    /// The name is a machine ID ("Google-Home-Mini-3f2a…", a hex string)
+    /// rather than one a person chose.
+    var hasMachineName: Bool {
+        friendlyName == nil && BonjourCatalog.looksLikeMachineID(displayName)
+    }
+
+    /// How good this service is as the source of its device's name and
+    /// model; lower is better.
+    var nameRank: Int {
+        if isGroup { return 9 }
+        if hasMachineName { return 8 }
+        return BonjourCatalog.nameRank(for: type)
+    }
+
+    /// The same service at another address (used for the phone's own
+    /// services, which resolve to loopback).
+    func moved(to newAddress: String) -> BonjourService {
+        BonjourService(name: name, type: type, address: newAddress, port: port, friendlyName: friendlyName, model: model)
+    }
+
     var detail: String {
         if let port = port {
             return "\(displayName) · port \(port)"
@@ -58,27 +83,47 @@ struct Device: Identifiable, Hashable, Sendable {
 
     var id: String { address }
 
-    /// The best name known: a Bonjour name, then the reverse-DNS name.
-    var name: String? {
-        let best = services.enumerated().min { first, second in
-            let firstRank = BonjourCatalog.nameRank(for: first.element.type)
-            let secondRank = BonjourCatalog.nameRank(for: second.element.type)
+    /// Services from the best name source to the worst, keeping arrival order
+    /// among equals.
+    private var rankedServices: [BonjourService] {
+        services.enumerated().sorted { first, second in
+            let firstRank = first.element.nameRank
+            let secondRank = second.element.nameRank
             return firstRank != secondRank ? firstRank < secondRank : first.offset < second.offset
+        }.map { $0.element }
+    }
+
+    /// The best name known: a Bonjour name a person chose, then the
+    /// reverse-DNS name, then a Bonjour machine ID.
+    var name: String? {
+        guard let best = rankedServices.first(where: { !$0.isGroup }) else {
+            return hostName ?? services.first?.displayName
         }
-        return best?.element.displayName ?? hostName
+        if best.hasMachineName, let hostName = hostName {
+            return hostName
+        }
+        return best.displayName
     }
 
     var title: String {
-        isThisDevice ? "This iPhone" : (name ?? "Unknown device")
+        isThisDevice ? "This device" : (name ?? "Unknown device")
     }
 
+    /// The raw model string from the best service that has one, for
+    /// example "Mac14,2" or "Google Home Mini".
     var model: String? {
-        services.lazy.compactMap { $0.model }.first
+        rankedServices.filter { !$0.isGroup }.lazy.compactMap { $0.model }.first
+    }
+
+    /// The model for people: "MacBook Air" rather than "Mac14,2".
+    var modelDescription: String? {
+        guard let model = model else { return nil }
+        return AppleModel.family(model) ?? model
     }
 
     var subtitle: String {
         var parts = [address]
-        if let model = model {
+        if let model = modelDescription {
             parts.append(model)
         }
         if let latency = latency {
@@ -128,7 +173,7 @@ enum DiscoveryEvent: Sendable {
 /// that ignore ping, with Bonjour listening the whole time, then reverse-DNS
 /// names. Like nmap -sn, but without ARP, which iOS does not allow.
 enum DiscoveryEngine {
-    static let hostConcurrency = 32
+    static let hostConcurrency = 64
     static let nameConcurrency = 16
 
     static func run(_ request: DiscoveryRequest, using deps: ScanDependencies) -> AsyncStream<DiscoveryEvent> {
@@ -226,6 +271,9 @@ enum DiscoveryEngine {
                     break
                 }
                 out.yield(.progress(0.2 + 0.7 * Double(done) / Double(pending.count)))
+                if done % 16 == 0 && done < pending.count {
+                    out.yield(.status("Checking quiet addresses over TCP… \(done) of \(pending.count)"))
+                }
 
                 if next < pending.count {
                     let upcoming = pending[next]
@@ -318,6 +366,13 @@ private actor DeviceTable {
     }
 
     func add(_ service: BonjourService) {
+        var service = service
+        // The phone's own services resolve over loopback (127.0.0.1); file
+        // them under its network address instead of inventing a device.
+        if service.address.hasPrefix("127.") {
+            guard let ownAddress = ownAddress else { return }
+            service = service.moved(to: ownAddress)
+        }
         update(service.address) { device in
             device.methods.insert(.bonjour)
             if !device.services.contains(service) {

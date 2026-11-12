@@ -12,6 +12,10 @@ final class BonjourBrowser: @unchecked Sendable {
     private var browsers: [NWBrowser] = []
     private var resolving: [String: NWConnection] = [:]
     private var seen: Set<String> = []
+    /// _device-info TXT records waiting for their host's address, by instance name.
+    private var deviceInfo: [String: [String: String]] = [:]
+    /// Addresses learned from other services, by (cleaned) instance name.
+    private var addressByName: [String: String] = [:]
     private var continuation: AsyncStream<BonjourService>.Continuation?
     private var browsing = false
     private var finished = false
@@ -67,9 +71,24 @@ final class BonjourBrowser: @unchecked Sendable {
             txt = record.dictionary
         }
 
-        // Connecting is how Network.framework resolves a service; ask for
-        // IPv4 so the address matches the rest of the app.
-        let parameters: NWParameters = type.hasSuffix("._udp") ? .udp : .tcp
+        if type == "_device-info._tcp" {
+            // Announced on port 0, so it can never be resolved by connecting.
+            // It only carries the host's model, and uses the same instance
+            // name as the host's other services, so attach it by name.
+            if let address = addressByName[name] {
+                yieldDeviceInfo(name: name, txt: txt, address: address)
+            } else {
+                deviceInfo[name] = txt
+            }
+            return
+        }
+
+        // Starting a connection is how Network.framework resolves a service.
+        // UDP is used even for TCP services: a UDP "connection" is ready as
+        // soon as the name resolves, sends nothing, and needs no listener, so
+        // services on placeholder ports (such as _workstation on port 9)
+        // resolve too. IPv4 keeps the address in line with the rest of the app.
+        let parameters = NWParameters.udp
         if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
             ip.version = .v4
         }
@@ -94,8 +113,8 @@ final class BonjourBrowser: @unchecked Sendable {
 
     private func resolved(_ key: String, _ connection: NWConnection, name: String, type: String, txt: [String: String]) {
         guard resolving[key] != nil else { return }
-        // A refused connection (.waiting) still tells us the address, if the
-        // service name has been resolved; otherwise wait for the timeout.
+        // Until the name resolves, the remote endpoint is still the service
+        // itself; then keep waiting (up to the timeout).
         guard case let .hostPort(host, port)? = connection.currentPath?.remoteEndpoint,
               case let .ipv4(ipv4) = host else {
             return
@@ -110,7 +129,26 @@ final class BonjourBrowser: @unchecked Sendable {
             model: txt["model"] ?? txt["md"] ?? txt["am"] ?? txt["ty"]
         )
         continuation?.yield(service)
+
+        let instance = BonjourCatalog.displayName(instance: name, type: type)
+        if addressByName[instance] == nil {
+            addressByName[instance] = address
+        }
+        if let waiting = deviceInfo.removeValue(forKey: instance) {
+            yieldDeviceInfo(name: instance, txt: waiting, address: address)
+        }
         drop(key)
+    }
+
+    private func yieldDeviceInfo(name: String, txt: [String: String], address: String) {
+        continuation?.yield(BonjourService(
+            name: name,
+            type: "_device-info._tcp",
+            address: address,
+            port: nil,
+            friendlyName: nil,
+            model: txt["model"]
+        ))
     }
 
     private func drop(_ key: String) {

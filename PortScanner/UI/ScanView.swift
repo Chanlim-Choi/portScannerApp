@@ -19,7 +19,7 @@ struct ScanView: View {
             }
             .navigationTitle("Port Scanner")
             .scrollDismissesKeyboard(.immediately)
-            .alert("Check the input", isPresented: errorIsPresented) {
+            .alert(model.errorTitle, isPresented: errorIsPresented) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(verbatim: model.errorMessage ?? "")

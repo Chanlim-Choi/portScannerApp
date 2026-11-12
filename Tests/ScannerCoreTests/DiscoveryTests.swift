@@ -95,7 +95,7 @@ final class DiscoveryEngineTests: XCTestCase {
 
         let phone = result.devices["10.0.0.3"]
         XCTAssertEqual(phone?.isThisDevice, true)
-        XCTAssertEqual(phone?.title, "This iPhone")
+        XCTAssertEqual(phone?.title, "This device")
 
         let quiet = result.devices["10.0.0.5"]
         XCTAssertEqual(quiet?.methods, [.tcp])
@@ -106,6 +106,7 @@ final class DiscoveryEngineTests: XCTestCase {
         XCTAssertTrue(speaker?.methods.contains(.bonjour) ?? false)
         XCTAssertEqual(speaker?.title, "Kitchen", "the hardware address prefix is removed")
         XCTAssertEqual(speaker?.model, "AudioAccessory5,1")
+        XCTAssertEqual(speaker?.modelDescription, "HomePod mini")
         XCTAssertEqual(speaker?.hostName, "kitchen.local")
 
         // Addresses that answered ping are not probed over TCP.
@@ -138,6 +139,38 @@ final class DiscoveryEngineTests: XCTestCase {
 
         XCTAssertTrue(result.devices.isEmpty)
         XCTAssertEqual(result.count { if case .permissionDenied = $0 { return true }; return false }, 1)
+    }
+
+    func testOwnLoopbackServicesJoinThisDevice() async {
+        let deps = discoveryDependencies(
+            log: ProbeLog(),
+            pingReplies: ["10.0.0.3": 0.0001],
+            tcp: { _, _ in .filtered },
+            services: [
+                BonjourService(name: "Chan's iPhone", type: "_companion-link._tcp", address: "127.0.0.1", port: 49152),
+            ]
+        )
+
+        let result = await discover(DiscoveryRequest(addresses: subnet, ownAddress: "10.0.0.3"), deps)
+
+        XCTAssertNil(result.devices["127.0.0.1"], "no device is made up for loopback")
+        let phone = result.devices["10.0.0.3"]
+        XCTAssertEqual(phone?.isThisDevice, true)
+        XCTAssertEqual(phone?.services.first?.address, "10.0.0.3")
+        XCTAssertEqual(phone?.methods, [.ping, .bonjour])
+    }
+
+    func testLoopbackServicesAreDroppedWithoutAnOwnAddress() async {
+        let deps = discoveryDependencies(
+            log: ProbeLog(),
+            pingReplies: [:],
+            tcp: { _, _ in .filtered },
+            services: [BonjourService(name: "Me", type: "_ssh._tcp", address: "127.0.0.1", port: 22)]
+        )
+
+        let result = await discover(DiscoveryRequest(addresses: subnet, ownAddress: nil), deps)
+
+        XCTAssertTrue(result.devices.isEmpty)
     }
 
     func testStoppingEndsTheSearch() async throws {
@@ -192,6 +225,38 @@ final class DeviceNamingTests: XCTestCase {
             BonjourService(name: "Chan's MacBook Pro", type: "_companion-link._tcp", address: "10.0.0.2", port: 49152),
         ]
         XCTAssertEqual(device.title, "Chan's MacBook Pro", "an Apple device name beats a web page name")
+    }
+
+    func testMachineIDNamesLoseToTheHostName() {
+        var device = Device(address: "10.0.0.8", hostName: "living-room.local")
+        device.services = [
+            BonjourService(name: "Google-Home-Mini-3f2a9c41d7e8b6a0c5d4", type: "_googlecast._tcp", address: "10.0.0.8", port: 8009, model: "Google Home Mini"),
+        ]
+        XCTAssertEqual(device.title, "living-room.local")
+
+        // Without a host name, the machine ID is still better than nothing.
+        device.hostName = nil
+        XCTAssertEqual(device.title, "Google-Home-Mini-3f2a9c41d7e8b6a0c5d4")
+    }
+
+    func testCastGroupsDoNotNameTheSpeaker() {
+        var device = Device(address: "10.0.0.9")
+        device.services = [
+            BonjourService(name: "Google-Cast-Group-1a2b3c4d5e6f7a8b", type: "_googlecast._tcp", address: "10.0.0.9", port: 32187, friendlyName: "Whole house", model: "Google Cast Group"),
+            BonjourService(name: "Google-Nest-Mini-9f8e7d6c5b4a3210", type: "_googlecast._tcp", address: "10.0.0.9", port: 8009, friendlyName: "Kitchen speaker", model: "Google Nest Mini"),
+        ]
+        XCTAssertEqual(device.title, "Kitchen speaker")
+        XCTAssertEqual(device.model, "Google Nest Mini")
+    }
+
+    func testMachineIDDetection() {
+        XCTAssertTrue(BonjourCatalog.looksLikeMachineID("Google-Home-Mini-3f2a9c41d7e8b6a0"))
+        XCTAssertTrue(BonjourCatalog.looksLikeMachineID("a4c1b2d3e5f60718"))
+        XCTAssertTrue(BonjourCatalog.looksLikeMachineID("1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"))
+        XCTAssertFalse(BonjourCatalog.looksLikeMachineID("Living Room"))
+        XCTAssertFalse(BonjourCatalog.looksLikeMachineID("Chan's MacBook Pro"))
+        XCTAssertFalse(BonjourCatalog.looksLikeMachineID("deadbeefcafe"), "letters only: probably a word")
+        XCTAssertFalse(BonjourCatalog.looksLikeMachineID("HP LaserJet 400"))
     }
 
     func testSubtitleAndMethods() {

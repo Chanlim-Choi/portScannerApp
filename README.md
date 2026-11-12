@@ -50,12 +50,18 @@ which already has a `PortScanner` folder):
    Language Swift.
 2. Delete the two Swift files it generates, and drag in the contents of this
    folder's `PortScanner` folder (the `Engine` and `UI` folders and
-   `PortScannerApp.swift`).
+   `PortScannerApp.swift`). Also copy `PortScanner-Info.plist` into the new
+   project's top folder, next to the new `.xcodeproj` (not inside the app's
+   `PortScanner` folder, or Xcode copies it into the app as a file).
 3. In the target's Build Settings set: Minimum Deployments iOS 16.0, Swift
    Language Version Swift 5. On Xcode 26 also set Default Actor Isolation to
    nonisolated and Approachable Concurrency to No.
 4. In the target's Info tab add "Privacy - Local Network Usage Description"
    (any short sentence) and "Bundle display name" = Port Scanner.
+5. In Build Settings set "Info.plist File" to `PortScanner-Info.plist` and
+   leave "Generate Info.plist File" on Yes. That file lists the Bonjour
+   service types; without it iOS blocks Bonjour and the Devices tab finds far
+   fewer devices, with no names or models.
 
 ## First scan
 
@@ -72,11 +78,14 @@ scan; if you switch apps, the scan stops and says so.
 
 - "Find devices" sweeps your Wi-Fi network (like `nmap -sn`): ping (ICMP)
   first, then TCP connections for devices that ignore ping, while listening
-  for Bonjour announcements from about 37 kinds of services (AirPlay, Google
-  Cast, printers, file sharing, HomeKit, Sonos, SSH and more).
-- Each device shows the best name found (its Bonjour name or reverse-DNS
-  name), its model when the device announces one, response time, and how it
-  was found. Your own iPhone is labelled.
+  for Bonjour announcements from 34 kinds of services (AirPlay, Google Cast,
+  printers, file sharing, HomeKit, Sonos, SSH and more). On networks larger
+  than 4,096 addresses only the 256 around the phone are searched.
+- Each device shows the best name found (its Bonjour name, or the name it
+  gives for its own address over Bonjour or in the router's DNS), its model
+  when the device announces one (Apple models in plain words, such as
+  "HomePod mini"), response time, and how it was found. The phone running the
+  app is labelled "This device".
 - Tap a device for its details and Bonjour services, then Quick, Standard or
   All-ports scan it in one tap.
 
@@ -99,6 +108,12 @@ scan; if you switch apps, the scan stops and says so.
 No raw sockets, so no SYN/FIN/Xmas scans, no OS fingerprinting, no MAC
 addresses or vendor lookup, no packet spoofing.
 
+For the Devices tab this means no ARP scan, which is how computers find every
+device on a LAN. A device that ignores ping, has none of the five probed TCP
+ports (22, 80, 443, 445, 62078) answering, and announces nothing over Bonjour
+does not appear. Names come only from Bonjour and the router's DNS. Devices
+that only have IPv6 addresses (Thread and Matter accessories) are not listed.
+
 ## Checking the engine without an iPhone
 
 The parsers and scan engine are plain Swift and have unit tests that use a fake
@@ -110,8 +125,26 @@ docker run --rm -v "%cd%:/src:ro" -w /src swift:6.2 swift test --scratch-path /t
 ```
 
 Every push to GitHub also runs these tests on Linux and builds the iPhone app,
-unsigned, on a macOS runner (`.github/workflows/build.yml`). The result is on
-the repository's Actions tab.
+unsigned, on a macOS runner (`.github/workflows/build.yml`), and checks that
+the built app's Info.plist has the Bonjour list and Local Network message.
+The result is on the repository's Actions tab.
+
+## Checking the real networking code on a Mac
+
+macOS shares iOS's networking stack, so the Apple-only code (ping socket,
+Bonjour browsing, name lookups, TCP probes) can be tried on a Mac without an
+iPhone. From this folder:
+
+```
+swiftc -O PortScanner/Engine/*.swift Tools/LiveCheck/main.swift -o /tmp/livecheck
+/tmp/livecheck bonjour            # Bonjour services and their addresses
+/tmp/livecheck names 192.168.1.20 # the name a device gives for its address
+/tmp/livecheck ping 192.168.1.1   # ICMP round-trip time
+/tmp/livecheck ports 127.0.0.1 22,80,443
+/tmp/livecheck discover           # the Devices tab's whole search
+```
+
+Only search or scan networks you are allowed to test.
 
 ## Next phases
 

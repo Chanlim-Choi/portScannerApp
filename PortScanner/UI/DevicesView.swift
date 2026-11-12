@@ -35,6 +35,11 @@ struct DevicesView: View {
         Section {
             if let network = model.network {
                 LabeledContent("Network", value: network.cidr)
+                if network.prefix < 20 {
+                    Text(verbatim: "Your network has more than 4,096 addresses, so only the 256 around this device are searched.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("Not connected to Wi-Fi")
                     .foregroundStyle(.secondary)
@@ -102,7 +107,8 @@ struct DeviceDetailView: View {
                     LabeledContent("Host name", value: hostName)
                 }
                 if let deviceModel = device.model {
-                    LabeledContent("Model", value: deviceModel)
+                    let family = device.modelDescription ?? deviceModel
+                    LabeledContent("Model", value: family == deviceModel ? deviceModel : "\(family) (\(deviceModel))")
                 }
                 if let latency = device.latency {
                     LabeledContent("Response time", value: Device.format(latency: latency))
@@ -149,7 +155,7 @@ private struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: device.symbolName)
+            Image(systemName: device.symbolName(thisDevice: UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"))
                 .font(.title3)
                 .frame(width: 32)
                 .foregroundStyle(.tint)
@@ -166,26 +172,36 @@ private struct DeviceRow: View {
 
 extension Device {
     /// An SF Symbol that suggests what kind of device this is.
-    var symbolName: String {
+    /// `thisDevice` is the symbol for the iPhone or iPad running the app.
+    func symbolName(thisDevice: String) -> String {
         if isThisDevice {
-            return "iphone"
+            return thisDevice
         }
-        let model = (self.model ?? "").lowercased()
-        if model.hasPrefix("appletv") { return "appletv" }
-        if model.hasPrefix("audioaccessory") { return "homepod" }
-        if model.hasPrefix("iphone") { return "iphone" }
-        if model.hasPrefix("ipad") { return "ipad" }
-        if model.contains("macbook") { return "laptopcomputer" }
-        if model.hasPrefix("mac") || model.hasPrefix("imac") { return "desktopcomputer" }
+        switch modelDescription {
+        case "Apple TV": return "appletv"
+        case "HomePod", "HomePod mini": return "homepod"
+        case "iPhone", "iPod touch": return "iphone"
+        case "iPad": return "ipad"
+        case "MacBook", "MacBook Pro", "MacBook Air": return "laptopcomputer"
+        case "Mac mini": return "macmini"
+        case "iMac", "Mac Pro", "Mac": return "desktopcomputer"
+        default: break
+        }
 
+        let model = (self.model ?? "").lowercased()
         let types = Set(services.map { $0.type })
         func has(_ candidates: [String]) -> Bool {
             !types.isDisjoint(with: candidates)
         }
         if has(["_ipp._tcp", "_ipps._tcp", "_printer._tcp", "_pdl-datastream._tcp", "_uscan._tcp", "_scanner._tcp"]) { return "printer" }
-        if has(["_googlecast._tcp", "_amzn-wplay._tcp", "_androidtvremote2._tcp"]) { return "tv" }
+        if has(["_googlecast._tcp"]) {
+            // Google Home and Nest speakers also announce Google Cast.
+            let speakerWords = ["home", "nest", "speaker", "audio"]
+            return speakerWords.contains { model.contains($0) } ? "hifispeaker" : "tv"
+        }
+        if has(["_amzn-wplay._tcp", "_androidtvremote2._tcp"]) || (has(["_airplay._tcp"]) && model.contains("tv")) { return "tv" }
         if has(["_raop._tcp", "_sonos._tcp", "_spotify-connect._tcp"]) { return "hifispeaker" }
-        if has(["_hap._tcp", "_hap._udp", "_homekit._tcp", "_matter._tcp", "_matterc._udp", "_hue._tcp", "_esphomelib._tcp"]) { return "homekit" }
+        if has(["_hap._tcp", "_homekit._tcp", "_hue._tcp", "_esphomelib._tcp"]) { return "homekit" }
         if has(["_companion-link._tcp"]) { return "laptopcomputer.and.iphone" }
         if has(["_smb._tcp", "_afpovertcp._tcp", "_nfs._tcp", "_adisk._tcp", "_workstation._tcp", "_device-info._tcp", "_ssh._tcp", "_rfb._tcp"]) { return "desktopcomputer" }
         return "network"

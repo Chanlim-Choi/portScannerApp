@@ -10,9 +10,6 @@
 		<string>_raop._tcp</string>
 		<string>_homekit._tcp</string>
 		<string>_hap._tcp</string>
-		<string>_hap._udp</string>
-		<string>_matter._tcp</string>
-		<string>_matterc._udp</string>
 		<string>_googlecast._tcp</string>
 		<string>_spotify-connect._tcp</string>
 		<string>_sonos._tcp</string>

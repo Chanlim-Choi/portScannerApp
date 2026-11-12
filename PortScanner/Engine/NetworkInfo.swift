@@ -1,4 +1,5 @@
 import Foundation
+import dnssd
 
 /// The network the phone is currently on, used to pre-fill the target field.
 enum LocalNetwork {
@@ -68,10 +69,23 @@ enum Resolver {
         }
     }
 
-    /// The name registered for an IPv4 address, such as "nas.local". On a home
-    /// network the system usually answers this over Bonjour. Gives up after
-    /// `timeout` seconds; the lookup itself cannot be interrupted.
+    /// The name of the device at an IPv4 address. Two sources are asked at
+    /// once: Bonjour (a multicast PTR query, which devices running Bonjour
+    /// answer with their own name, such as "nas.local") and the system
+    /// resolver, which for LAN addresses only asks the router's DNS. The
+    /// Bonjour answer wins.
     static func reverseName(_ address: String, timeout: TimeInterval = 2) async -> String? {
+        async let multicast = MulticastReverseLookup.name(for: address, timeout: timeout)
+        async let unicast = unicastReverseName(address, timeout: timeout)
+        if let name = await multicast {
+            return name
+        }
+        return await unicast
+    }
+
+    /// getnameinfo, given up after `timeout` seconds (the call itself cannot
+    /// be interrupted, and usually fails within milliseconds on a LAN).
+    private static func unicastReverseName(_ address: String, timeout: TimeInterval) async -> String? {
         await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             let once = ResumeOnce(continuation)
             DispatchQueue.global(qos: .utility).async {
@@ -160,5 +174,99 @@ private final class ResumeOnce<Value>: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         pending?.resume(returning: value)
+    }
+}
+
+/// Asks Bonjour for the PTR record of an IPv4 address, like
+/// `dig -x <address> -p 5353 @224.0.0.251`. Uses the system's DNS-SD service,
+/// which needs Local Network access but no NSBonjourServices entry.
+enum MulticastReverseLookup {
+    static func name(for address: String, timeout: TimeInterval) async -> String? {
+        guard let queryName = DNSName.reverseIPv4(address) else { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            PTRQuery(name: queryName, continuation: continuation).start(timeout: timeout)
+        }
+    }
+}
+
+/// One multicast PTR query. Everything runs on one serial queue, which is also
+/// where DNS-SD delivers its callbacks, so the state needs no lock.
+private final class PTRQuery: @unchecked Sendable {
+    private static let queue = DispatchQueue(label: "portscanner.ptr")
+
+    private let name: String
+    private var continuation: CheckedContinuation<String?, Never>?
+    private var serviceRef: DNSServiceRef?
+
+    init(name: String, continuation: CheckedContinuation<String?, Never>) {
+        self.name = name
+        self.continuation = continuation
+    }
+
+    func start(timeout: TimeInterval) {
+        PTRQuery.queue.async {
+            // The callback gets this object back through the context pointer;
+            // the retain is balanced in finish().
+            let context = Unmanaged.passRetained(self).toOpaque()
+            var ref: DNSServiceRef?
+            let error = DNSServiceQueryRecord(
+                &ref,
+                DNSServiceFlags(kDNSServiceFlagsForceMulticast),
+                0,
+                self.name,
+                UInt16(kDNSServiceType_PTR),
+                UInt16(kDNSServiceClass_IN),
+                ptrQueryReply,
+                context
+            )
+            guard error == DNSServiceErrorType(kDNSServiceErr_NoError), let ref = ref else {
+                Unmanaged<PTRQuery>.fromOpaque(context).release()
+                self.finish(nil)
+                return
+            }
+            self.serviceRef = ref
+            DNSServiceSetDispatchQueue(ref, PTRQuery.queue)
+            PTRQuery.queue.asyncAfter(deadline: .now() + timeout) {
+                self.finish(nil)
+            }
+        }
+    }
+
+    /// Runs on the queue. Only the first call has an effect.
+    fileprivate func finish(_ result: String?) {
+        if let ref = serviceRef {
+            serviceRef = nil
+            DNSServiceRefDeallocate(ref)
+            Unmanaged.passUnretained(self).release()
+        }
+        guard let continuation = continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: result)
+    }
+}
+
+private func ptrQueryReply(
+    _ serviceRef: DNSServiceRef?,
+    _ flags: DNSServiceFlags,
+    _ interfaceIndex: UInt32,
+    _ errorCode: DNSServiceErrorType,
+    _ fullName: UnsafePointer<CChar>?,
+    _ recordType: UInt16,
+    _ recordClass: UInt16,
+    _ dataLength: UInt16,
+    _ data: UnsafeRawPointer?,
+    _ ttl: UInt32,
+    _ context: UnsafeMutableRawPointer?
+) {
+    guard let context = context else { return }
+    let query = Unmanaged<PTRQuery>.fromOpaque(context).takeUnretainedValue()
+    guard errorCode == DNSServiceErrorType(kDNSServiceErr_NoError),
+          flags & DNSServiceFlags(kDNSServiceFlagsAdd) != 0,
+          let data = data, dataLength > 0 else {
+        return
+    }
+    let bytes = Array(UnsafeRawBufferPointer(start: data, count: Int(dataLength)))
+    if let name = DNSName.decode(bytes) {
+        query.finish(name)
     }
 }

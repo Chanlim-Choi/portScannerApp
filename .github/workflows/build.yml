@@ -48,14 +48,25 @@ jobs:
             xcodes+=("$newest_26/Contents/Developer")
           fi
           for dir in "${xcodes[@]}"; do
+            symroot="$RUNNER_TEMP/build-$(basename "$(dirname "$(dirname "$dir")")")"
             echo "::group::$(DEVELOPER_DIR="$dir" xcodebuild -version | head -1) ($dir)"
             DEVELOPER_DIR="$dir" xcodebuild \
               -project PortScanner.xcodeproj \
               -target PortScanner \
               -configuration Debug \
               -sdk iphoneos \
-              SYMROOT="$RUNNER_TEMP/build-$(basename "$(dirname "$(dirname "$dir")")")" \
+              SYMROOT="$symroot" \
               CODE_SIGNING_ALLOWED=NO \
               build
             echo "::endgroup::"
+
+            # The built Info.plist must carry both the generated keys and the
+            # Bonjour list from PortScanner-Info.plist; iOS needs both.
+            plist="$symroot/Debug-iphoneos/PortScanner.app/Info.plist"
+            /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$plist"
+            /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$plist"
+            built=$(/usr/libexec/PlistBuddy -c "Print :NSBonjourServices" "$plist" | grep -cE '_(tcp|udp)$')
+            listed=$(grep -cE '<string>_.*\._(tcp|udp)</string>' PortScanner-Info.plist)
+            echo "Bonjour service types in the built app: $built (listed: $listed)"
+            test "$built" -eq "$listed"
           done

@@ -4,7 +4,8 @@ import Foundation
 ///
 /// iOS only lets an app browse the types listed under NSBonjourServices in its
 /// Info.plist, so every type here must also be in PortScanner-Info.plist (a
-/// unit test checks that the two lists match).
+/// unit test checks that the two lists match). Thread and Matter types are
+/// left out: those devices announce IPv6 addresses only.
 enum BonjourCatalog {
     static let types: [(type: String, title: String)] = [
         ("_companion-link._tcp", "Apple device"),
@@ -13,9 +14,6 @@ enum BonjourCatalog {
         ("_raop._tcp", "AirPlay speaker"),
         ("_homekit._tcp", "Home hub"),
         ("_hap._tcp", "HomeKit accessory"),
-        ("_hap._udp", "HomeKit accessory (Thread)"),
-        ("_matter._tcp", "Matter device"),
-        ("_matterc._udp", "Matter device (pairing)"),
         ("_googlecast._tcp", "Google Cast"),
         ("_spotify-connect._tcp", "Spotify Connect"),
         ("_sonos._tcp", "Sonos"),
@@ -64,6 +62,27 @@ enum BonjourCatalog {
         default:
             return 5
         }
+    }
+
+    /// True for names built from a serial number or ID, such as
+    /// "Google-Home-Mini-3f2a9c41d7e8b6a0" or "a4c1b2d3e5f60718": twelve or
+    /// more hexadecimal characters in a row (ignoring dashes), including a digit.
+    static func looksLikeMachineID(_ name: String) -> Bool {
+        var run = 0
+        var runHasDigit = false
+        for character in name where character != "-" {
+            if character.isHexDigit {
+                run += 1
+                runHasDigit = runHasDigit || character.isNumber
+                if run >= 12 && runHasDigit {
+                    return true
+                }
+            } else {
+                run = 0
+                runHasDigit = false
+            }
+        }
+        return false
     }
 
     /// Strips the hardware address some services put in their instance names.

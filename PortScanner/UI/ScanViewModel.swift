@@ -9,6 +9,7 @@ final class ScanViewModel: ObservableObject {
     @Published var timing: TimingTemplate = .normal
     @Published var skipDiscovery = false
     @Published var errorMessage: String?
+    @Published private(set) var errorTitle = "Check the input"
 
     // Outputs.
     @Published private(set) var isScanning = false
@@ -46,6 +47,7 @@ final class ScanViewModel: ObservableObject {
             let ports = try selectedPorts()
             request = ScanRequest(targets: targets, ports: ports, timing: timing, skipDiscovery: skipDiscovery)
         } catch {
+            errorTitle = "Check the input"
             errorMessage = error.localizedDescription
             return
         }
@@ -74,7 +76,8 @@ final class ScanViewModel: ObservableObject {
     /// Scans one address straight away, for example from the device list.
     func scan(_ address: String, preset: PortPreset) {
         if isScanning {
-            errorMessage = "A scan is already running. Stop it first, then try again."
+            errorTitle = "A scan is already running"
+            errorMessage = "Stop the current scan first, then scan this device again."
             return
         }
         targetText = address
