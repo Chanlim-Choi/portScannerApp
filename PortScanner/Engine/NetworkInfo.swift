@@ -69,15 +69,20 @@ enum Resolver {
         }
     }
 
-    /// The name of the device at an IPv4 address. Two sources are asked at
-    /// once: Bonjour (a multicast PTR query, which devices running Bonjour
-    /// answer with their own name, such as "nas.local") and the system
-    /// resolver, which for LAN addresses only asks the router's DNS. The
-    /// Bonjour answer wins.
+    /// The name of the device at an IPv4 address. Three sources are asked at
+    /// once: Bonjour through the system (a multicast PTR query, which devices
+    /// running Bonjour answer with their own name, such as "nas.local"), the
+    /// device itself (the same query sent to it directly, which a few devices
+    /// answer only this way), and the system resolver, which for LAN
+    /// addresses only asks the router's DNS. Bonjour answers win.
     static func reverseName(_ address: String, timeout: TimeInterval = 2) async -> String? {
         async let multicast = MulticastReverseLookup.name(for: address, timeout: timeout)
+        async let direct = DirectMDNS.reverseName(address, timeout: min(timeout, 1))
         async let unicast = unicastReverseName(address, timeout: timeout)
         if let name = await multicast {
+            return name
+        }
+        if let name = await direct {
             return name
         }
         return await unicast
