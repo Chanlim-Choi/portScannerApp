@@ -186,7 +186,7 @@ enum TargetParser {
         return result
     }
 
-    private static func ipv4Value(_ text: String) -> UInt32? {
+    static func ipv4Value(_ text: String) -> UInt32? {
         let parts = text.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 4 else { return nil }
         var value: UInt32 = 0

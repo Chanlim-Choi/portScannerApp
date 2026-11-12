@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 @MainActor
 final class ScanViewModel: ObservableObject {
@@ -61,8 +60,7 @@ final class ScanViewModel: ObservableObject {
         progress = 0
         status = "Starting…"
         isScanning = true
-        // Auto-Lock would send the app to the background and iOS would pause the scan.
-        UIApplication.shared.isIdleTimerDisabled = true
+        KeepAwake.begin()
 
         let started = Date()
         task = Task { [weak self] in
@@ -71,6 +69,17 @@ final class ScanViewModel: ObservableObject {
             }
             self?.finish(started: started, stopped: Task.isCancelled)
         }
+    }
+
+    /// Scans one address straight away, for example from the device list.
+    func scan(_ address: String, preset: PortPreset) {
+        if isScanning {
+            errorMessage = "A scan is already running. Stop it first, then try again."
+            return
+        }
+        targetText = address
+        self.preset = preset
+        start()
     }
 
     func stop() {
@@ -143,7 +152,7 @@ final class ScanViewModel: ObservableObject {
         isScanning = false
         task = nil
         status = ""
-        UIApplication.shared.isIdleTimerDisabled = false
+        KeepAwake.end()
 
         // A host still in progress when the scan was stopped has partial results.
         for index in hosts.indices where !hosts[index].isFinished {

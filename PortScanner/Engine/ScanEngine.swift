@@ -16,6 +16,13 @@ struct ScanDependencies: Sendable {
     var probe: @Sendable (String, UInt16, TimeInterval) async -> ProbeResult
     /// Turns a hostname into one numeric address, or nil when it does not resolve.
     var resolve: @Sendable (String) async -> String?
+    /// ICMP echo sweep: the round-trip time of every address that answered,
+    /// or nil when ping is not available.
+    var ping: @Sendable ([String], TimeInterval) async -> [String: TimeInterval]?
+    /// Reverse lookup: the name registered for an IPv4 address, or nil.
+    var reverseName: @Sendable (String) async -> String?
+    /// Listens for Bonjour services for the given number of seconds.
+    var browse: @Sendable (TimeInterval) -> AsyncStream<BonjourService>
 }
 
 enum ScanEvent: Sendable {
@@ -37,7 +44,7 @@ enum ScanEngine {
         let address: String
     }
 
-    private enum Liveness: Sendable {
+    enum Liveness: Sendable {
         case up
         case down
         case denied
@@ -203,7 +210,7 @@ enum ScanEngine {
         return hosts
     }
 
-    /// Returns the hosts that answered on at least one discovery port.
+    /// Returns the hosts that answered a ping or on at least one discovery port.
     private static func discover(
         _ hosts: [Host],
         _ timing: TimingTemplate,
@@ -213,12 +220,24 @@ enum ScanEngine {
         let timeout = max(timing.timeout, 1.0)
         var states = [Liveness](repeating: .down, count: hosts.count)
 
+        // Ping first: one socket asks every address at once, which is quick.
+        if let replies = await deps.ping(hosts.map { $0.address }, timeout) {
+            for (index, host) in hosts.enumerated() where replies[host.address] != nil {
+                states[index] = .up
+            }
+        }
+        if Task.isCancelled { return [] }
+        let pingShare = 0.25
+        out.yield(.progress(ScanEngine.discoveryShare * pingShare))
+
+        // Hosts that ignore ping may still answer a TCP connection.
+        let pending = hosts.indices.filter { states[$0] != .up }
         await withTaskGroup(of: (Int, Liveness).self) { group in
             var next = 0
             var done = 0
 
-            while next < hosts.count && next < ScanEngine.discoveryConcurrency {
-                let index = next
+            while next < pending.count && next < ScanEngine.discoveryConcurrency {
+                let index = pending[next]
                 let address = hosts[index].address
                 next += 1
                 group.addTask {
@@ -231,10 +250,11 @@ enum ScanEngine {
                 let (index, result) = item
                 states[index] = result
                 done += 1
-                out.yield(.progress(ScanEngine.discoveryShare * Double(done) / Double(hosts.count)))
+                let fraction = pingShare + (1 - pingShare) * Double(done) / Double(pending.count)
+                out.yield(.progress(ScanEngine.discoveryShare * fraction))
 
-                if !Task.isCancelled && next < hosts.count {
-                    let upcoming = next
+                if next < pending.count {
+                    let upcoming = pending[next]
                     let address = hosts[upcoming].address
                     next += 1
                     group.addTask {
@@ -254,7 +274,7 @@ enum ScanEngine {
         return live
     }
 
-    private static func liveness(
+    static func liveness(
         of address: String,
         timeout: TimeInterval,
         _ deps: ScanDependencies

@@ -1,9 +1,8 @@
 import SwiftUI
 
 struct ScanView: View {
-    @StateObject private var model = ScanViewModel()
+    @ObservedObject var model: ScanViewModel
     @FocusState private var keyboardFocused: Bool
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -24,16 +23,6 @@ struct ScanView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(verbatim: model.errorMessage ?? "")
-            }
-            .onChange(of: scenePhase) { phase in
-                switch phase {
-                case .active:
-                    model.refreshLocalNetwork()
-                case .background:
-                    model.appMovedToBackground()
-                default:
-                    break
-                }
             }
         }
     }

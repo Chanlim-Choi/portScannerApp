@@ -19,7 +19,7 @@ let package = Package(
         .target(
             name: "ScannerCore",
             path: "PortScanner/Engine",
-            exclude: ["NetworkInfo.swift", "TCPProbe.swift", "LiveDependencies.swift"]
+            exclude: ["NetworkInfo.swift", "TCPProbe.swift", "LiveDependencies.swift", "BonjourBrowser.swift"]
         ),
         .testTarget(
             name: "ScannerCoreTests",

@@ -181,6 +181,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PortScanner-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Port Scanner";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Port Scanner connects to devices on your network to check which ports are open.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -208,6 +209,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PortScanner-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Port Scanner";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Port Scanner connects to devices on your network to check which ports are open.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

@@ -68,6 +68,45 @@ enum Resolver {
         }
     }
 
+    /// The name registered for an IPv4 address, such as "nas.local". On a home
+    /// network the system usually answers this over Bonjour. Gives up after
+    /// `timeout` seconds; the lookup itself cannot be interrupted.
+    static func reverseName(_ address: String, timeout: TimeInterval = 2) async -> String? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            let once = ResumeOnce(continuation)
+            DispatchQueue.global(qos: .utility).async {
+                once.resume(returning: Resolver.reverseLookup(address))
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                once.resume(returning: nil)
+            }
+        }
+    }
+
+    private static func reverseLookup(_ address: String) -> String? {
+        guard var socketAddress = Pinger.makeSocketAddress(address) else { return nil }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = withUnsafePointer(to: &socketAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketPointer in
+                getnameinfo(
+                    socketPointer,
+                    socklen_t(MemoryLayout<sockaddr_in>.size),
+                    &host,
+                    socklen_t(host.count),
+                    nil,
+                    0,
+                    NI_NAMEREQD
+                )
+            }
+        }
+        guard status == 0 else { return nil }
+        var name = String(cString: host)
+        while name.hasSuffix(".") {
+            name.removeLast()
+        }
+        return name.isEmpty || name == address ? nil : name
+    }
+
     private static func lookup(_ name: String) -> String? {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
@@ -103,5 +142,23 @@ enum Resolver {
             }
         }
         return chosen
+    }
+}
+
+/// Resumes a continuation from whichever of several callbacks comes first.
+private final class ResumeOnce<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: Value) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(returning: value)
     }
 }

@@ -29,6 +29,7 @@ private func fakeDependencies(
     log: ProbeLog,
     delayNanoseconds: UInt64 = 0,
     names: [String: String] = [:],
+    pingReplies: [String: TimeInterval]? = [:],
     answer: @escaping @Sendable (_ address: String, _ port: UInt16, _ attempt: Int) -> ProbeResult
 ) -> ScanDependencies {
     ScanDependencies(
@@ -47,6 +48,15 @@ private func fakeDependencies(
         },
         resolve: { name in
             names[name]
+        },
+        ping: { addresses, _ in
+            pingReplies.map { replies in
+                replies.filter { addresses.contains($0.key) }
+            }
+        },
+        reverseName: { _ in nil },
+        browse: { _ in
+            AsyncStream { $0.finish() }
         }
     )
 }
@@ -240,6 +250,46 @@ final class ScanEngineTests: XCTestCase {
         XCTAssertEqual(events.portEvents.map(\.port), [22])
         XCTAssertEqual(events.portEvents.first?.state, .open)
         XCTAssertEqual(events.permissionDeniedCount, 1)
+    }
+
+    func testPingRepliesCountAsUpWithoutTcpChecks() async {
+        let log = ProbeLog()
+        let deps = fakeDependencies(log: log, pingReplies: ["10.0.0.2": 0.003]) { _, _, _ in .filtered }
+        let request = ScanRequest(
+            targets: [.address("10.0.0.1"), .address("10.0.0.2")],
+            ports: [22],
+            timing: .insane,
+            skipDiscovery: false
+        )
+
+        let events = await collect(request, deps)
+
+        XCTAssertEqual(events.discovery?.up, 1)
+        XCTAssertEqual(events.startedHosts.map(\.address), ["10.0.0.2"])
+        // 10.0.0.2 answered ping, so its only probe is the port scan of 22;
+        // 10.0.0.1 got the five TCP discovery probes and no port scan.
+        let pinged = await log.calls.filter { $0.hasPrefix("10.0.0.2:") }
+        let quiet = await log.calls.filter { $0.hasPrefix("10.0.0.1:") }
+        XCTAssertEqual(pinged, ["10.0.0.2:22"])
+        XCTAssertEqual(quiet.count, 5)
+    }
+
+    func testDiscoveryFallsBackToTcpWhenPingIsUnavailable() async {
+        let log = ProbeLog()
+        let deps = fakeDependencies(log: log, pingReplies: nil) { address, _, _ in
+            address == "10.0.0.1" ? .closed : .filtered
+        }
+        let request = ScanRequest(
+            targets: [.address("10.0.0.1"), .address("10.0.0.2")],
+            ports: [22],
+            timing: .insane,
+            skipDiscovery: false
+        )
+
+        let events = await collect(request, deps)
+
+        XCTAssertEqual(events.discovery?.up, 1)
+        XCTAssertEqual(events.startedHosts.map(\.address), ["10.0.0.1"])
     }
 
     func testSkipDiscoveryScansEveryAddress() async {

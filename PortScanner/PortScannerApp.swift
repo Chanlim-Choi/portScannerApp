@@ -8,7 +8,7 @@ struct PortScannerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ScanView()
+            RootView()
         }
     }
 }

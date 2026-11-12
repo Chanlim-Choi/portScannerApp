@@ -59,14 +59,28 @@ which already has a `PortScanner` folder):
 
 ## First scan
 
-The first scan of a local address makes iOS ask for Local Network access. Tap
-Allow, then run the scan again: probes sent while the question was on screen
-are counted as unanswered.
+The first device search or scan makes iOS ask for Local Network access. Tap
+Allow, then run it again: probes sent while the question was on screen are
+counted as unanswered.
 
 Keep the app on screen while it scans. The screen will not auto-lock during a
 scan; if you switch apps, the scan stops and says so.
 
-## What it does now (phase 1)
+## What it does now
+
+### Devices tab (phase 2)
+
+- "Find devices" sweeps your Wi-Fi network (like `nmap -sn`): ping (ICMP)
+  first, then TCP connections for devices that ignore ping, while listening
+  for Bonjour announcements from about 37 kinds of services (AirPlay, Google
+  Cast, printers, file sharing, HomeKit, Sonos, SSH and more).
+- Each device shows the best name found (its Bonjour name or reverse-DNS
+  name), its model when the device announces one, response time, and how it
+  was found. Your own iPhone is labelled.
+- Tap a device for its details and Bonjour services, then Quick, Standard or
+  All-ports scan it in one tap.
+
+### Port scan tab (phase 1)
 
 - Targets: single IP, hostname, CIDR block, nmap-style ranges (`10.0.0.1-50`,
   `10.0.0.100-`, `10.0.0-2.*`), full ranges (`10.0.0.1-10.0.0.20`), IPv6, and
@@ -77,7 +91,8 @@ scan; if you switch apps, the scan stops and says so.
 - Port sets: top 100, top 1000, all 65535, or a custom list (`22,80,8000-8100`).
 - Speed presets modelled on nmap `-T2` to `-T5`. Each scan starts with a few
   connections and widens, so the first packets to a device are not dropped.
-- Host discovery before scanning a range (TCP ping), with a `-Pn` switch to skip it.
+- Host discovery before scanning a range (ping, then TCP for quiet hosts),
+  with a `-Pn` switch to skip it.
 
 ## What iOS does not allow
 
@@ -100,7 +115,6 @@ the repository's Actions tab.
 
 ## Next phases
 
-2. Discovery: ICMP ping, reverse DNS and Bonjour names, a device list to tap.
 3. Service detection: banners, HTTP title and server, TLS certificate, SSH version.
 4. Convenience: saved profiles, scan history, export, app icon, optional UDP.
 
